@@ -1,10 +1,14 @@
+import requests
+from PIL import Image
 import streamlit as st
+from io import BytesIO
 from loguru import logger
 from langchain_openai import ChatOpenAI
 from langchain.chains.llm import LLMChain
 from private.api_key import OPENAI_API_KEY
 from langchain.prompts import PromptTemplate
 from agents.information_lookup_agent import information_lookup
+from output_parsers import person_intel_parser
 
 def setup_llm_chain(temperature: str = 0.0):
 
@@ -19,8 +23,11 @@ def setup_llm_chain(temperature: str = 0.0):
         3. Topic that they interesting in
         4. 2 message to open a conversation with them
     You must answer in {answer_language}.
+    \n{format_instruction}
     """
-    prompt_template = PromptTemplate(template=template, input_variables=["information_of_person", "answer_language"])
+    prompt_template = PromptTemplate(template=template, 
+                                     input_variables=["information_of_person", "answer_language"],
+                                     partial_variables={"format_instruction": person_intel_parser.get_format_instructions()})
 
     # Setup chain
     chain = LLMChain(llm=llm, prompt=prompt_template)
@@ -49,9 +56,44 @@ if __name__ == "__main__":
         if name.strip():
             with st.spinner("Wait for it..."):
                 # Get person information
-                information = information_lookup(name)
+                information_and_link = information_lookup(name)
+                information = information_and_link["information"]
+                image_link = information_and_link["image_link"]
 
-                # Get final result chain
+                # Get final dictionary result
                 result = chain.run(information_of_person=information, answer_language=language)
+                result = person_intel_parser.parse(result).to_dict()
+
+                # Plot image
+                response = requests.get(image_link)
+                img = BytesIO(response.content)
+
+                _, cent_co, _ = st.columns(3)
+                with cent_co:
+                    st.image(img, caption=f"{name.title()}'s image.")
+
+                # Print result
                 st.write(f"## {name.title()}'s information:")
-                st.write(result)
+                st.write("### Summary: ")
+                st.write(result["summary"])
+
+                # Facts
+                st.write("### Facts: ")
+                st.markdown(
+                    f"""
+                    - {result["facts"][0]}
+                    - {result["facts"][1]}
+                    """)
+                
+                # Interest topic
+                st.write("### Topics of Interest: ")
+                st.write(result["topics_of_interest"])
+                
+                # Ice breakers
+                st.write("### Open conversation examples: ")
+                st.markdown(
+                    f"""
+                    - {result["ice_breakers"][0]}
+                    - {result["ice_breakers"][1]}
+                    """)
+
